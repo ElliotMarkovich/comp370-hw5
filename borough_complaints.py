@@ -1,60 +1,48 @@
-#!/usr/bin/env python3
-import argparse
 import csv
-from collections import defaultdict
 from datetime import datetime
+import argparse
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(
-        description="CLI tool to output complaint counts per complaint type and borough for a date range."
-    )
-    parser.add_argument("-i", "--input", required=True, help="Path to the input CSV file")
-    parser.add_argument("-s", "--start", required=True, help="Start date (YYYY-MM-DD or similar string format matching data)")
-    parser.add_argument("-e", "--end", required=True, help="End date (YYYY-MM-DD or similar string format matching data)")
-    parser.add_argument("-o", "--output", help="Optional output CSV file path. If omitted, prints to stdout.")
-    return parser.parse_args()
+def parse_date(date_str):
+    """Attempt to parse various common datetime formats from the NYC 311 CSV."""
+    for fmt in ('%m/%d/%Y %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y'):
+        try:
+            return datetime.strptime(date_str.strip(), fmt)
+        except ValueError:
+            continue
+    return None
 
 def main():
-    args = parse_arguments()
-    
-    # Dictionary to hold counts: counts[(complaint_type, borough)] = count
-    counts = defaultdict(int)
-    
-    # Open and parse the CSV file line-by-line
-    with open(args.input, mode="r", encoding="utf-8", errors="ignore") as f:
+    parser = argparse.ArgumentParser(description="Aggregate 311 complaints by type and borough within a date range.")
+    parser.add_argument('-i', '--input', required=True, help="Path to input CSV file")
+    parser.add_argument('-s', '--start', required=True, help="Start date in YYYY-MM-DD format")
+    parser.add_argument('-e', '--end', required=True, help="End date in YYYY-MM-DD format")
+    parser.add_argument('-o', '--output', required=True, help="Path to output CSV file")
+    args = parser.parse_args()
+
+    # Parse start and end dates
+    start_date = datetime.strptime(args.start, '%Y-%m-%d')
+    # Extend end date to the end of the day so inclusive filtering works properly
+    end_date = datetime.strptime(args.end, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+
+    counts = {}
+
+    with open(args.input, mode='r', encoding='utf-8', errors='replace') as f:
         reader = csv.DictReader(f)
-        
         for row in reader:
-            # Note: Depending on your exact column headers in the CSV, 
-            # adapt 'Created Date', 'Complaint Type', and 'Borough' to match the dataset.
-            created_date_str = row.get("Created Date", "").strip()
-            complaint_type = row.get("Complaint Type", "").strip()
-            borough = row.get("Borough", "").strip()
+            created_str = row.get('Created Date', '')
+            dt = parse_date(created_str)
             
-            if not created_date_str or not complaint_type or not borough:
-                continue
-                
-            # Extract date portion (e.g., '2024-01-01' from '2024-01-01 12:30:00')
-            # Adjust slicing or parsing based on how dates are formatted in your CSV file
-            incident_date = created_date_str.split(" ")[0]
-            
-           # Filter by date range (lexicographical string comparison works if format is YYYY-MM-DD)
-            if args.start <= incident_date <= args.end:
-                counts[(complaint_type, borough)] += 1
+            if dt and start_date <= dt <= end_date:
+                complaint = row.get('Complaint Type', 'Unknown')
+                borough = row.get('Borough', 'Unknown')
+                key = (complaint, borough)
+                counts[key] = counts.get(key, 0) + 1
 
-    # Prepare output rows
-    output_data = [["complaint type", "borough", "count"]]
-    for (comp_type, bor), count in sorted(counts.items()):
-        output_data.append([comp_type, bor, str(count)])
-        
-    # Write to file or stdout
-    if args.output:
-        with open(args.output, mode="w", newline="", encoding="utf-8") as out_f:
-            writer = csv.writer(out_f)
-            writer.writerows(output_data)
-    else:
-        for row in output_data:
-            print(", ".join(row))
+    with open(args.output, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['complaint type', 'borough', 'count'])
+        for (complaint, borough), count in counts.items():
+            writer.writerow([complaint, borough, count])
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
